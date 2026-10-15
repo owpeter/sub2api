@@ -17,7 +17,12 @@ import (
 
 // ForwardCountTokens 转发 count_tokens 请求到上游 API
 // 特点：不记录使用量、仅支持非流式响应
-func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context, account *Account, parsed *ParsedRequest) error {
+func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context, account *Account, parsed *ParsedRequest) (err error) {
+	defer func() { err = claudePrivacySafeError(ctx, err) }()
+	if err := ValidateClaudePrivacyTarget(ctx, account); err != nil {
+		s.countTokensError(c, http.StatusServiceUnavailable, "api_error", err.Error())
+		return err
+	}
 	if parsed == nil {
 		s.countTokensError(c, http.StatusBadRequest, "invalid_request_error", "Request body is empty")
 		return fmt.Errorf("parse request: empty request")
@@ -74,7 +79,7 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 		return err
 	}
 
-	isClaudeCodeCT := IsClaudeCodeClient(ctx) || isClaudeCodeClient(c.GetHeader("User-Agent"), parsed.MetadataUserID)
+	isClaudeCodeCT := ClaudeIdentityPrivacyEnabled(ctx) || IsClaudeCodeClient(ctx) || isClaudeCodeClient(c.GetHeader("User-Agent"), parsed.MetadataUserID)
 	shouldMimicClaudeCode := account.IsOAuth() && !isClaudeCodeCT
 
 	if shouldMimicClaudeCode {
@@ -152,6 +157,11 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 	// 构建上游请求
 	upstreamReq, wireBody, err := s.buildCountTokensRequest(ctx, c, account, body, token, tokenType, reqModel, shouldMimicClaudeCode)
 	if err != nil {
+		var privacyErr *ClaudePrivacyError
+		if errors.As(err, &privacyErr) {
+			s.countTokensError(c, privacyErr.Status, "invalid_request_error", privacyErr.Code)
+			return err
+		}
 		s.countTokensError(c, http.StatusInternalServerError, "api_error", "Failed to build request")
 		return err
 	}
@@ -228,7 +238,7 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 		upstreamDetail := ""
-		if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+		if !ClaudeIdentityPrivacyEnabled(ctx) && s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 			maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
 			if maxBytes <= 0 {
 				maxBytes = 2048
@@ -238,7 +248,7 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 		setOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
 
 		// 记录上游错误摘要便于排障（不回显请求内容）
-		if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+		if !ClaudeIdentityPrivacyEnabled(ctx) && s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 			logger.LegacyPrintf("service.gateway",
 				"count_tokens upstream error %d (account=%d platform=%s type=%s): %s",
 				resp.StatusCode,
@@ -338,13 +348,13 @@ func (s *GatewayService) forwardCountTokensAnthropicAPIKeyPassthrough(ctx contex
 		if isCountTokensUnsupported404(resp.StatusCode, respBody) {
 			logger.LegacyPrintf("service.gateway",
 				"[count_tokens] Upstream does not support count_tokens (404), returning 404: account=%d name=%s msg=%s",
-				account.ID, account.Name, truncateString(upstreamMsg, 512))
+				account.ID, account.Name, claudePrivacyLogText(ctx, truncateString(upstreamMsg, 512)))
 			s.countTokensError(c, http.StatusNotFound, "not_found_error", "count_tokens endpoint is not supported by upstream")
 			return nil
 		}
 
 		upstreamDetail := ""
-		if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+		if !ClaudeIdentityPrivacyEnabled(ctx) && s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 			maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
 			if maxBytes <= 0 {
 				maxBytes = 2048
@@ -464,6 +474,9 @@ func (s *GatewayService) buildCountTokensRequestAnthropicAPIKeyPassthrough(
 
 // buildCountTokensRequest 构建 count_tokens 上游请求
 func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token, tokenType, modelID string, mimicClaudeCode bool) (*http.Request, []byte, error) {
+	if ClaudeIdentityPrivacyEnabled(ctx) {
+		return s.buildClaudePrivateRequest(ctx, account, body, token, tokenType, modelID, true)
+	}
 	body = stripDeferredToolCacheControl(body)
 	// 确定目标 URL
 	targetURL := claudeAPICountTokensURL

@@ -135,6 +135,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		h.errorResponse(c, http.StatusInternalServerError, "api_error", "User context not found")
 		return
 	}
+	privacyIngress, privacyOK := h.beginClaudePrivacy(c, apiKey)
+	if !privacyOK {
+		return
+	}
 	reqLog := requestLogger(
 		c,
 		"handler.gateway.messages",
@@ -160,12 +164,19 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 
+	body, privacyOK = h.prepareClaudePrivacy(c, privacyIngress, body, false)
+	if !privacyOK {
+		return
+	}
+
 	setOpsRequestContext(c, "", false)
 
 	bodyRef := service.NewRequestBodyRef(body)
 	parsedReq, err := service.ParseGatewayRequest(bodyRef, domain.PlatformAnthropic)
 	if err != nil {
-		logRequestBodyParseFailure(reqLog, body, err)
+		if !service.ClaudeIdentityPrivacyEnabled(c.Request.Context()) {
+			logRequestBodyParseFailure(reqLog, body, err)
+		}
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
 	}
@@ -291,12 +302,12 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		UserAgent: c.GetHeader("User-Agent"),
 		APIKeyID:  apiKey.ID,
 	}
-	sessionHash := h.gatewayService.GenerateSessionHash(parsedReq)
+	sessionHash := h.gatewaySessionHash(c, parsedReq)
 
 	// [DEBUG-STICKY] 打印会话 hash 生成结果
 	reqLog.Info("sticky.session_hash_generated",
 		zap.String("session_hash", sessionHash),
-		zap.String("metadata_user_id_raw", parsedReq.MetadataUserID),
+		zap.Bool("identity_privacy", service.ClaudeIdentityPrivacyEnabled(c.Request.Context())),
 	)
 
 	// 获取平台：优先使用强制平台（/antigravity 路由），其次使用 composite 解析出的目标平台，否则使用分组平台
@@ -391,6 +402,13 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				}
 			}
 			account := selection.Account
+			if !h.claudePrivacyTargetAllowed(c, account) {
+				if selection.Acquired && selection.ReleaseFunc != nil {
+					selection.ReleaseFunc()
+				}
+				h.gatewayService.ReleaseAccountSession(context.Background(), account, sessionKey)
+				return
+			}
 			setOpsSelectedAccount(c, account.ID, account.Platform)
 
 			// 检查请求拦截（预热请求、SUGGESTION MODE等）
@@ -726,6 +744,13 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				}
 			}
 			account := selection.Account
+			if !h.claudePrivacyTargetAllowed(c, account) {
+				if selection.Acquired && selection.ReleaseFunc != nil {
+					selection.ReleaseFunc()
+				}
+				h.gatewayService.ReleaseAccountSession(context.Background(), account, sessionKey)
+				return
+			}
 			setOpsSelectedAccount(c, account.ID, account.Platform)
 
 			// [DEBUG-STICKY] 打印账号选择结果
@@ -997,6 +1022,11 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 			if err != nil {
 				// Beta policy block: return 400 immediately, no failover
+				var privacyErr *service.ClaudePrivacyError
+				if errors.As(err, &privacyErr) {
+					h.claudePrivacyError(c, privacyErr)
+					return
+				}
 				var betaBlockedErr *service.BetaBlockedError
 				if errors.As(err, &betaBlockedErr) {
 					service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalPolicyDenied)
@@ -2146,6 +2176,10 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 		h.errorResponse(c, http.StatusInternalServerError, "api_error", "User context not found")
 		return
 	}
+	privacyIngress, privacyOK := h.beginClaudePrivacy(c, apiKey)
+	if !privacyOK {
+		return
+	}
 	reqLog := requestLogger(
 		c,
 		"handler.gateway.count_tokens",
@@ -2170,12 +2204,19 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 		return
 	}
 
+	body, privacyOK = h.prepareClaudePrivacy(c, privacyIngress, body, true)
+	if !privacyOK {
+		return
+	}
+
 	setOpsRequestContext(c, "", false)
 
 	bodyRef := service.NewRequestBodyRef(body)
 	parsedReq, err := service.ParseGatewayRequest(bodyRef, domain.PlatformAnthropic)
 	if err != nil {
-		logRequestBodyParseFailure(reqLog, body, err)
+		if !service.ClaudeIdentityPrivacyEnabled(c.Request.Context()) {
+			logRequestBodyParseFailure(reqLog, body, err)
+		}
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
 	}
@@ -2223,7 +2264,7 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 		UserAgent: c.GetHeader("User-Agent"),
 		APIKeyID:  apiKey.ID,
 	}
-	sessionHash := h.gatewayService.GenerateSessionHash(parsedReq)
+	sessionHash := h.gatewaySessionHash(c, parsedReq)
 
 	// 选择支持该模型的账号
 	account, err := h.gatewayService.SelectAccountForModel(c.Request.Context(), apiKey.GroupID, sessionHash, parsedReq.Model)
@@ -2234,6 +2275,10 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 			markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 		}
 		h.errorResponse(c, cls.Status, cls.ErrType, cls.Message)
+		return
+	}
+	if !h.claudePrivacyTargetAllowed(c, account) {
+		h.gatewayService.ReleaseAccountSession(context.Background(), account, sessionHash)
 		return
 	}
 	setOpsSelectedAccount(c, account.ID, account.Platform)

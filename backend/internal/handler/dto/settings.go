@@ -221,6 +221,9 @@ type SystemSettings struct {
 	ClaudeCodeClientVersionSynced          string `json:"claude_code_client_version_synced"`
 	ClaudeCodeVersionAutoSyncEnabled       bool   `json:"claude_code_version_auto_sync_enabled"`
 
+	ClaudeCodeIdentityPrivacy      *service.ClaudeCodeIdentityPrivacySettings `json:"claude_code_identity_privacy"`
+	ClaudeCodeIdentityPrivacyReady bool                                       `json:"claude_code_identity_privacy_ready"`
+
 	// codex_cli_only 加固
 	MinCodexVersion                      string `json:"min_codex_version"`
 	MaxCodexVersion                      string `json:"max_codex_version"`

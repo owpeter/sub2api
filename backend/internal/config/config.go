@@ -979,6 +979,9 @@ const (
 
 // GatewayConfig API网关相关配置
 type GatewayConfig struct {
+	// ClaudeIdentityPrivacy supplies the persistent deployment identity secret.
+	// Group activation is stored separately in system settings.
+	ClaudeIdentityPrivacy ClaudeIdentityPrivacyConfig `mapstructure:"claude_identity_privacy"`
 	// 等待上游响应头的超时时间（秒），0表示无超时
 	// 注意：这不影响流式数据传输，只控制等待响应头的时间
 	ResponseHeaderTimeout int `mapstructure:"response_header_timeout"`
@@ -1134,6 +1137,13 @@ type GatewayConfig struct {
 	// CNProviders: 国产 OpenAI 兼容供应商（kimi/zhipu/deepseek）的余额检测配置。
 	// 仅作用于 payg（按量付费）账号：周期探测余额，低于阈值则临时停调。
 	CNProviders GatewayCNProvidersConfig `mapstructure:"cn_providers"`
+}
+
+// ClaudeIdentityPrivacyConfig must be identical on every gateway replica.
+// Key is a base64-encoded, independently generated 32-byte secret.
+type ClaudeIdentityPrivacyConfig struct {
+	Key       string `mapstructure:"key" json:"-"`
+	Namespace string `mapstructure:"namespace"`
 }
 
 // GatewayGrokConfig holds Grok-specific gateway scheduling knobs.
@@ -2525,6 +2535,8 @@ func setDefaults() {
 	viper.SetDefault("gateway.antigravity_fallback_cooldown_minutes", 1)
 	viper.SetDefault("gateway.antigravity_extra_retries", 10)
 	viper.SetDefault("gateway.max_body_size", int64(256*1024*1024))
+	viper.SetDefault("gateway.claude_identity_privacy.key", "")
+	viper.SetDefault("gateway.claude_identity_privacy.namespace", "")
 	viper.SetDefault("gateway.text_max_body_size", int64(32*1024*1024))
 	viper.SetDefault("gateway.upstream_response_read_max_bytes", DefaultUpstreamResponseReadMaxBytes)
 	viper.SetDefault("gateway.models_list_read_max_bytes", DefaultModelsListReadMaxBytes)

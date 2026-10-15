@@ -117,6 +117,8 @@ type WebSearchManagerBuilder func(cfg *WebSearchEmulationConfig, proxyURLs map[i
 
 // SettingService 系统设置服务
 type SettingService struct {
+	claudePrivacyCache          atomic.Pointer[cachedClaudePrivacySettings]
+	claudePrivacyMu             sync.Mutex
 	settingRepo                 SettingRepository
 	defaultSubGroupReader       DefaultSubscriptionGroupReader
 	proxyRepo                   ProxyRepository // for resolving websearch provider proxy URLs
@@ -376,7 +378,16 @@ func (s *SettingService) GetAllSettings(ctx context.Context) (*SystemSettings, e
 		return nil, fmt.Errorf("get all settings: %w", err)
 	}
 
-	return s.parseSettings(settings), nil
+	privacy, err := parseClaudePrivacySettings(settings[SettingKeyClaudeCodeIdentityPrivacy])
+	if err != nil {
+		// Keep the admin endpoint usable for explicit repair. Runtime policy
+		// loading still fails closed; version 0 cannot be saved or enabled.
+		privacy = &ClaudeCodeIdentityPrivacySettings{Version: 0, EnabledGroupIDs: []int64{}}
+	}
+	result := s.parseSettings(settings)
+	result.ClaudeCodeIdentityPrivacy = privacy
+	result.ClaudeCodeIdentityPrivacyReady = s.ClaudeIdentityPrivacyReady()
+	return result, nil
 }
 
 // SetOnUpdateCallback sets a callback function to be called when settings are updated

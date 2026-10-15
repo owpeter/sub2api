@@ -290,6 +290,8 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		AllowUngroupedKeyScheduling:                            settings.AllowUngroupedKeyScheduling,
 		BackendModeEnabled:                                     settings.BackendModeEnabled,
 		OpenAITTFTMode:                                         settings.OpenAITTFTMode,
+		ClaudeCodeIdentityPrivacy:                              settings.ClaudeCodeIdentityPrivacy,
+		ClaudeCodeIdentityPrivacyReady:                         settings.ClaudeCodeIdentityPrivacyReady,
 		EnableFingerprintUnification:                           settings.EnableFingerprintUnification,
 		EnableMetadataPassthrough:                              settings.EnableMetadataPassthrough,
 		EnableCCHSigning:                                       settings.EnableCCHSigning,

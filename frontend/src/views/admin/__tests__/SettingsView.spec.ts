@@ -724,6 +724,54 @@ describe("admin SettingsView payment visible method controls", () => {
     adminSettingsFetch.mockResolvedValue(undefined);
   });
 
+  it("selects privacy groups and saves only public policy fields", async () => {
+    getSettings.mockResolvedValue({ ...baseSettingsResponse,
+      claude_code_identity_privacy: { version: 1, enabled_group_ids: [] },
+      claude_code_identity_privacy_ready: true,
+    });
+    getGroups.mockResolvedValue([
+      { id: 7, name: "Private Claude", platform: "anthropic", status: "active" },
+      { id: 8, name: "Other platform", platform: "openai", status: "active" },
+    ]);
+    const wrapper = mountView();
+    await flushPromises();
+    await openGatewayTab(wrapper);
+    const field = wrapper.find('[data-testid="claude-identity-privacy"]');
+    expect(field.text()).toContain("Private Claude");
+    expect(field.text()).not.toContain("Other platform");
+    await field.find('input[type="checkbox"]').setValue(true);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    const payload = updateSettings.mock.calls.at(-1)?.[0];
+    expect(payload.claude_code_identity_privacy).toEqual({ version: 1, enabled_group_ids: [7] });
+    expect(payload).not.toHaveProperty("claude_code_identity_privacy_ready");
+    expect(payload.claude_code_identity_privacy).not.toHaveProperty("key");
+    wrapper.unmount();
+  });
+
+  it("allows disabling privacy with a missing deployment key but prevents enabling", async () => {
+    getSettings.mockResolvedValue({ ...baseSettingsResponse,
+      claude_code_identity_privacy: { version: 1, enabled_group_ids: [7] },
+      claude_code_identity_privacy_ready: false,
+    });
+    getGroups.mockResolvedValue([
+      { id: 7, name: "Selected", platform: "anthropic" },
+      { id: 8, name: "Unselected", platform: "anthropic" },
+    ]);
+    const wrapper = mountView();
+    await flushPromises();
+    await openGatewayTab(wrapper);
+    const inputs = wrapper.find('[data-testid="claude-identity-privacy"]').findAll<HTMLInputElement>('input[type="checkbox"]');
+    expect(inputs[0].element.disabled).toBe(false);
+    expect(inputs[1].element.disabled).toBe(true);
+    await inputs[0].setValue(false);
+    expect(inputs[0].element.disabled).toBe(true);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings.mock.calls.at(-1)?.[0].claude_code_identity_privacy).toEqual({ version: 1, enabled_group_ids: [] });
+    wrapper.unmount();
+  });
+
   it("loads and saves the open button visibility for each custom menu", async () => {
     const menuItems = [
       { id: "docs", label: "Docs", url: "https://example.com/docs", icon_svg: "", visibility: "user", sort_order: 0 },

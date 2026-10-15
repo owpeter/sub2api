@@ -375,7 +375,7 @@ func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Res
 
 	// 调试日志：打印上游错误响应
 	logger.LegacyPrintf("service.gateway", "[Forward] Upstream error (non-retryable): Account=%d(%s) Status=%d RequestID=%s Body=%s",
-		account.ID, account.Name, resp.StatusCode, resp.Header.Get("x-request-id"), truncateString(string(body), 1000))
+		account.ID, account.Name, resp.StatusCode, claudePrivacyLogText(ctx, resp.Header.Get("x-request-id")), claudePrivacyLogText(ctx, truncateString(string(body), 1000)))
 
 	upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(body))
 	upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
@@ -396,7 +396,7 @@ func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Res
 
 	// Enrich Ops error logs with upstream status + message, and optionally a truncated body snippet.
 	upstreamDetail := ""
-	if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+	if !ClaudeIdentityPrivacyEnabled(ctx) && s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 		maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
 		if maxBytes <= 0 {
 			maxBytes = 2048
@@ -432,7 +432,7 @@ func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Res
 	MarkResponseCommitted(c)
 
 	// 记录上游错误响应体摘要便于排障（可选：由配置控制；不回显到客户端）
-	if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+	if !ClaudeIdentityPrivacyEnabled(ctx) && s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 		logger.LegacyPrintf("service.gateway",
 			"Upstream error %d (account=%d platform=%s type=%s): %s",
 			resp.StatusCode,
@@ -584,7 +584,7 @@ func (s *GatewayService) handleRetryExhaustedError(ctx context.Context, resp *ht
 	}
 
 	upstreamDetail := ""
-	if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+	if !ClaudeIdentityPrivacyEnabled(ctx) && s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 		maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
 		if maxBytes <= 0 {
 			maxBytes = 2048
@@ -604,7 +604,7 @@ func (s *GatewayService) handleRetryExhaustedError(ctx context.Context, resp *ht
 		Detail:             upstreamDetail,
 	})
 
-	if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+	if !ClaudeIdentityPrivacyEnabled(ctx) && s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 		logger.LegacyPrintf("service.gateway",
 			"Upstream error %d retries_exhausted (account=%d platform=%s type=%s): %s",
 			resp.StatusCode,
@@ -1388,7 +1388,7 @@ func (s *GatewayService) resolveCacheTTLUsageOverrideTarget(ctx context.Context,
 	if account.IsCacheTTLOverrideEnabled() {
 		return account.GetCacheTTLOverrideTarget(), true
 	}
-	if account.IsAnthropicOAuthOrSetupToken() && s != nil && s.settingService != nil && s.settingService.IsAnthropicCacheTTL1hInjectionEnabled(ctx) {
+	if !ClaudeIdentityPrivacyEnabled(ctx) && account.IsAnthropicOAuthOrSetupToken() && s != nil && s.settingService != nil && s.settingService.IsAnthropicCacheTTL1hInjectionEnabled(ctx) {
 		return cacheTTLTarget5m, true
 	}
 	return "", false

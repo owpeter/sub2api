@@ -217,6 +217,12 @@ security:
 # 网关配置
 # =============================================================================
 gateway:
+  # Claude Code identity privacy; select groups separately in admin settings.
+  # Base64 encoding of 32 random bytes, persistent across restarts/replicas.
+  # Environment: GATEWAY_CLAUDE_IDENTITY_PRIVACY_KEY / GATEWAY_CLAUDE_IDENTITY_PRIVACY_NAMESPACE
+  claude_identity_privacy:
+    key: ""
+    namespace: ""
   # Timeout for waiting upstream response headers (seconds)
   # 等待上游响应头超时时间（秒）
   response_header_timeout: 600

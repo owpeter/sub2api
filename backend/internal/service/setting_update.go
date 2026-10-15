@@ -468,6 +468,13 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyBackendModeEnabled] = strconv.FormatBool(settings.BackendModeEnabled)
 
 	// Gateway forwarding behavior
+	if settings.ClaudeCodeIdentityPrivacy != nil {
+		value, err := s.claudePrivacySettingUpdate(ctx, settings.ClaudeCodeIdentityPrivacy)
+		if err != nil {
+			return nil, err
+		}
+		updates[SettingKeyClaudeCodeIdentityPrivacy] = value
+	}
 	mode := normalizeOpenAITTFTMode(settings.OpenAITTFTMode)
 	if strings.TrimSpace(settings.OpenAITTFTMode) != "" && strings.ToLower(strings.TrimSpace(settings.OpenAITTFTMode)) != OpenAITTFTModeSemantic && strings.ToLower(strings.TrimSpace(settings.OpenAITTFTMode)) != OpenAITTFTModeVisible {
 		return nil, fmt.Errorf("%s must be one of: %s/%s", SettingKeyOpenAITTFTMode, OpenAITTFTModeSemantic, OpenAITTFTModeVisible)
@@ -699,6 +706,9 @@ func (s *SettingService) buildAuthSourceDefaultUpdates(ctx context.Context, sett
 }
 
 func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
+	s.claudePrivacyMu.Lock()
+	s.claudePrivacyCache.Store(nil)
+	s.claudePrivacyMu.Unlock()
 	if settings == nil {
 		return
 	}

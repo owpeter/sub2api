@@ -276,6 +276,9 @@ func markOpsStreamError(c *gin.Context, streamErr OpsStreamError) {
 		streamErr.SkipMonitoring = currentOpsFailureSkipMonitoring(c)
 	}
 	snapshotOpsStreamErrorContext(c, &streamErr)
+	if c.Request != nil && ClaudeIdentityPrivacyEnabled(c.Request.Context()) {
+		streamErr.Message, streamErr.UpstreamMessage, streamErr.UpstreamDetail = "privacy_stream_error", "", ""
+	}
 	if GetOpenAIClientTransport(c) == OpenAIClientTransportWS {
 		if value, ok := c.Get(OpsStreamTurnKey); ok {
 			streamErr.Turn, _ = value.(int)
@@ -408,6 +411,10 @@ func setOpsUpstreamError(c *gin.Context, upstreamStatusCode int, upstreamMessage
 	if c == nil {
 		return
 	}
+	if c.Request != nil && ClaudeIdentityPrivacyEnabled(c.Request.Context()) {
+		upstreamMessage, upstreamDetail = "privacy_upstream_error", ""
+		c.Set(OpsUpstreamErrorDetailKey, "")
+	}
 	if upstreamStatusCode > 0 {
 		c.Set(OpsUpstreamStatusCodeKey, upstreamStatusCode)
 	}
@@ -515,6 +522,9 @@ func appendOpsUpstreamError(c *gin.Context, ev OpsUpstreamErrorEvent) {
 	c.Set(OpsUpstreamErrorsKey, existing)
 
 	checkSkipMonitoringForUpstreamEvent(c, &evCopy)
+	if c.Request != nil && ClaudeIdentityPrivacyEnabled(c.Request.Context()) {
+		evCopy.Message, evCopy.Detail, evCopy.UpstreamResponseBody, evCopy.UpstreamRequestID = "privacy_upstream_error", "", "", ""
+	}
 }
 
 // opsUpstreamProxyAttribution derives both attribution fields from one

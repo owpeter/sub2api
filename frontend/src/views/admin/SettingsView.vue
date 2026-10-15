@@ -5377,6 +5377,38 @@
                 </p>
               </div>
 
+              <!-- Claude Code identity privacy -->
+              <fieldset data-testid="claude-identity-privacy" class="space-y-3 rounded-xl border border-gray-200 p-4 dark:border-dark-600">
+                <legend class="px-1 text-sm font-medium text-gray-900 dark:text-white">
+                  {{ t("admin.settings.gatewayForwarding.identityPrivacy") }}
+                </legend>
+                <p class="text-sm text-gray-500 dark:text-dark-400">
+                  {{ t("admin.settings.gatewayForwarding.identityPrivacyHint") }}
+                </p>
+                <p class="text-sm" :class="form.claude_code_identity_privacy_ready ? 'text-green-600' : 'text-amber-600'">
+                  {{ t(form.claude_code_identity_privacy_ready ? "admin.settings.gatewayForwarding.identityPrivacyReady" : "admin.settings.gatewayForwarding.identityPrivacyNotReady") }}
+                </p>
+                <p class="text-sm text-gray-500 dark:text-dark-400">
+                  {{ t("admin.settings.gatewayForwarding.identityPrivacyLimits") }}
+                </p>
+                <div v-if="form.claude_code_identity_privacy.version !== 1" class="space-y-2 text-sm text-red-600">
+                  <p>{{ t("admin.settings.gatewayForwarding.identityPrivacyInvalid") }}</p>
+                  <button type="button" class="btn btn-secondary" @click="form.claude_code_identity_privacy = { version: 1, enabled_group_ids: [] }">
+                    {{ t("admin.settings.gatewayForwarding.identityPrivacyReset") }}
+                  </button>
+                </div>
+                <div v-else class="flex flex-wrap gap-x-6 gap-y-3">
+                  <label v-for="group in claudePrivacyGroupOptions" :key="group.id" class="flex items-center gap-2 text-sm text-gray-700 dark:text-dark-200">
+                    <input v-model="form.claude_code_identity_privacy.enabled_group_ids" type="checkbox" :value="group.id"
+                      :disabled="!form.claude_code_identity_privacy_ready && !form.claude_code_identity_privacy.enabled_group_ids.includes(group.id)" />
+                    {{ group.name }}
+                  </label>
+                  <p v-if="claudePrivacyGroupOptions.length === 0" class="text-sm text-gray-500">
+                    {{ t("admin.settings.gatewayForwarding.identityPrivacyNoGroups") }}
+                  </p>
+                </div>
+              </fieldset>
+
               <!-- Fingerprint Unification -->
               <div class="flex items-center justify-between">
                 <div>
@@ -9183,7 +9215,15 @@ const adminApiKeyExists = ref(false);
 const adminApiKeyMasked = ref("");
 const adminApiKeyOperating = ref(false);
 const newAdminApiKey = ref("");
+const claudePrivacyGroupOptions = computed(() => {
+  const groups = claudePrivacyGroups.value.map((group) => ({ id: group.id, name: group.name }));
+  for (const id of form.claude_code_identity_privacy.enabled_group_ids) {
+    if (!groups.some((group) => group.id === id)) groups.push({ id, name: "#" + id });
+  }
+  return groups;
+});
 const subscriptionGroups = ref<AdminGroup[]>([]);
+const claudePrivacyGroups = ref<AdminGroup[]>([]);
 
 // Upstream billing probe state
 const upstreamBillingProbeLoading = ref(true);
@@ -10015,6 +10055,8 @@ const form = reactive<SettingsForm>({
   openai_advanced_scheduler_weight_session_sticky: "",
   // Gateway forwarding behavior
   openai_ttft_mode: "semantic",
+  claude_code_identity_privacy: { version: 1, enabled_group_ids: [] as number[] },
+  claude_code_identity_privacy_ready: false,
   enable_fingerprint_unification: true,
   enable_metadata_passthrough: false,
   enable_cch_signing: false,
@@ -11233,6 +11275,7 @@ async function loadSettings() {
 async function loadSubscriptionGroups() {
   try {
     const groups = await adminAPI.groups.getAll();
+    claudePrivacyGroups.value = groups.filter((group) => group.platform === "anthropic");
     subscriptionGroups.value = groups.filter(
       (group) =>
         group.subscription_type === "subscription" && group.status === "active",
@@ -11660,6 +11703,7 @@ async function saveSettings() {
       allow_ungrouped_key_scheduling: form.allow_ungrouped_key_scheduling,
       openai_ttft_mode:
         form.openai_ttft_mode === "visible" ? "visible" : "semantic",
+      claude_code_identity_privacy: form.claude_code_identity_privacy,
       enable_fingerprint_unification: form.enable_fingerprint_unification,
       enable_metadata_passthrough: form.enable_metadata_passthrough,
       enable_cch_signing: form.enable_cch_signing,

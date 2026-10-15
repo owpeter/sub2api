@@ -89,6 +89,11 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 
 // Forward 转发请求到Claude API
 func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, parsed *ParsedRequest) (result *ForwardResult, err error) {
+	defer func() { err = claudePrivacySafeError(ctx, err) }()
+	if err := ValidateClaudePrivacyTarget(ctx, account); err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"type": "error", "error": gin.H{"type": "api_error", "message": err.Error()}})
+		return nil, err
+	}
 	startTime := time.Now()
 	if parsed == nil {
 		return nil, fmt.Errorf("parse request: empty request")
@@ -178,7 +183,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	originalModel := reqModel
 
 	// === DEBUG: 打印客户端原始请求（headers + body 摘要）===
-	if c != nil {
+	if c != nil && !ClaudeIdentityPrivacyEnabled(ctx) {
 		s.debugLogGatewaySnapshot("CLIENT_ORIGINAL", c.Request.Header, body, map[string]string{
 			"account":      fmt.Sprintf("%d(%s)", account.ID, account.Name),
 			"account_type": string(account.Type),
@@ -198,7 +203,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	if c != nil {
 		clientUserAgent = c.GetHeader("User-Agent")
 	}
-	isClaudeCode := IsClaudeCodeClient(ctx) || isClaudeCodeClient(clientUserAgent, parsed.MetadataUserID)
+	isClaudeCode := ClaudeIdentityPrivacyEnabled(ctx) || IsClaudeCodeClient(ctx) || isClaudeCodeClient(clientUserAgent, parsed.MetadataUserID)
 
 	// 补充判定：上游 API 网关（如 new-api）转发真实 Claude Code 流量时，
 	// UA 会变成 Go-http-client 但 body 保留了完整的 Claude Code 特征
@@ -271,9 +276,11 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	// 抹除 "Today's date is …" 语句里可能被注入的隐写指纹（4 种撇号 × 2 种日期
 	// 分隔符），还原为 ASCII 撇号 + "-" 分隔符。运行在 mimicry 分支之外，
 	// 保证真实 Claude Code 客户端注入的指纹同样被清洗。
-	if next, ok := s.normalizeClientDatelineIfEnabled(ctx, account, body); ok {
-		if err := replaceBody(next); err != nil {
-			return nil, err
+	if !ClaudeIdentityPrivacyEnabled(ctx) {
+		if next, ok := s.normalizeClientDatelineIfEnabled(ctx, account, body); ok {
+			if err := replaceBody(next); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -322,7 +329,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		logger.LegacyPrintf("service.gateway", "Model mapping applied: %s -> %s (account: %s, source=%s)", originalModel, mappedModel, account.Name, mappingSource)
 	}
 
-	if s.shouldInjectAnthropicCacheTTL1h(ctx, account) {
+	if !ClaudeIdentityPrivacyEnabled(ctx) && s.shouldInjectAnthropicCacheTTL1h(ctx, account) {
 		if err := replaceBody(injectAnthropicCacheControlTTL1h(body)); err != nil {
 			return nil, err
 		}
@@ -428,7 +435,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 						Kind:               "signature_error",
 						Message:            extractUpstreamErrorMessage(respBody),
 						Detail: func() string {
-							if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+							if !ClaudeIdentityPrivacyEnabled(ctx) && s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 								return truncateString(string(respBody), s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes)
 							}
 							return ""
@@ -491,7 +498,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 									Kind:               "signature_retry_thinking",
 									Message:            extractUpstreamErrorMessage(retryRespBody),
 									Detail: func() string {
-										if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+										if !ClaudeIdentityPrivacyEnabled(ctx) && s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 											return truncateString(string(retryRespBody), s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes)
 										}
 										return ""
@@ -574,7 +581,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 						Kind:               "budget_constraint_error",
 						Message:            errMsg,
 						Detail: func() string {
-							if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+							if !ClaudeIdentityPrivacyEnabled(ctx) && s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 								return truncateString(string(respBody), s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes)
 							}
 							return ""
@@ -646,7 +653,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					Kind:               "retry",
 					Message:            extractUpstreamErrorMessage(respBody),
 					Detail: func() string {
-						if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+						if !ClaudeIdentityPrivacyEnabled(ctx) && s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 							return truncateString(string(respBody), s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes)
 						}
 						return ""
@@ -687,7 +694,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 
 			// 调试日志：打印重试耗尽后的错误响应
 			logger.LegacyPrintf("service.gateway", "[Forward] Upstream error (retry exhausted, failover): Account=%d(%s) Status=%d RequestID=%s Body=%s",
-				account.ID, account.Name, resp.StatusCode, resp.Header.Get("x-request-id"), truncateString(string(respBody), 1000))
+				account.ID, account.Name, resp.StatusCode, claudePrivacyLogText(ctx, resp.Header.Get("x-request-id")), claudePrivacyLogText(ctx, truncateString(string(respBody), 1000)))
 
 			s.handleRetryExhaustedSideEffects(ctx, resp, account, reqModel)
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -701,7 +708,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				Kind:               "retry_exhausted_failover",
 				Message:            extractUpstreamErrorMessage(respBody),
 				Detail: func() string {
-					if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+					if !ClaudeIdentityPrivacyEnabled(ctx) && s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 						return truncateString(string(respBody), s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes)
 					}
 					return ""
@@ -724,7 +731,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 
 		// 调试日志：打印上游错误响应
 		logger.LegacyPrintf("service.gateway", "[Forward] Upstream error (failover): Account=%d(%s) Status=%d RequestID=%s Body=%s",
-			account.ID, account.Name, resp.StatusCode, resp.Header.Get("x-request-id"), truncateString(string(respBody), 1000))
+			account.ID, account.Name, resp.StatusCode, claudePrivacyLogText(ctx, resp.Header.Get("x-request-id")), claudePrivacyLogText(ctx, truncateString(string(respBody), 1000)))
 
 		s.handleFailoverSideEffects(ctx, resp, account, reqModel)
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -737,7 +744,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 			Kind:               "failover",
 			Message:            extractUpstreamErrorMessage(respBody),
 			Detail: func() string {
-				if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+				if !ClaudeIdentityPrivacyEnabled(ctx) && s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 					return truncateString(string(respBody), s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes)
 				}
 				return ""
@@ -764,7 +771,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 				upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 				upstreamDetail := ""
-				if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+				if !ClaudeIdentityPrivacyEnabled(ctx) && s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 					maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
 					if maxBytes <= 0 {
 						maxBytes = 2048
@@ -784,7 +791,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					Detail:             upstreamDetail,
 				})
 
-				if s.cfg.Gateway.LogUpstreamErrorBody {
+				if !ClaudeIdentityPrivacyEnabled(ctx) && s.cfg.Gateway.LogUpstreamErrorBody {
 					logger.LegacyPrintf("service.gateway",
 						"Account %d: 400 error, attempting failover: %s",
 						account.ID,
@@ -841,7 +848,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				)
 
 				upstreamDetail := ""
-				if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+				if !ClaudeIdentityPrivacyEnabled(ctx) && s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 					maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
 					if maxBytes <= 0 {
 						maxBytes = 2048
@@ -864,8 +871,8 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 
 				logger.LegacyPrintf("service.gateway",
 					"[Forward] SSE error event in stream: Account=%d(%s) RequestID=%s Body=%s",
-					account.ID, account.Name, resp.Header.Get("x-request-id"),
-					truncateString(sseErr.RawData, 1000),
+					account.ID, account.Name, claudePrivacyLogText(ctx, resp.Header.Get("x-request-id")),
+					claudePrivacyLogText(ctx, truncateString(sseErr.RawData, 1000)),
 				)
 
 				return nil, &UpstreamFailoverError{

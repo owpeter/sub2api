@@ -260,6 +260,8 @@ type UpdateSettingsRequest struct {
 	ClaudeCodeClientVersion                *string `json:"claude_code_client_version"`
 	ClaudeCodeVersionAutoSyncEnabled       *bool   `json:"claude_code_version_auto_sync_enabled"`
 
+	ClaudeCodeIdentityPrivacy *service.ClaudeCodeIdentityPrivacySettings `json:"claude_code_identity_privacy"`
+
 	// codex_cli_only 加固（global-only）
 	MinCodexVersion                      string `json:"min_codex_version"`
 	MaxCodexVersion                      string `json:"max_codex_version"`
@@ -1705,6 +1707,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.OpsMetricsIntervalSeconds
 		}(),
+		ClaudeCodeIdentityPrivacy: req.ClaudeCodeIdentityPrivacy,
 		EnableFingerprintUnification: func() bool {
 			if req.EnableFingerprintUnification != nil {
 				return *req.EnableFingerprintUnification
@@ -2102,6 +2105,11 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		ForceEmailOnThirdPartySignup: boolValueOrDefault(req.ForceEmailOnThirdPartySignup, previousAuthSourceDefaults.ForceEmailOnThirdPartySignup),
 	}
 	if err := h.settingService.UpdateSettingsWithAuthSourceDefaultsOmitting(c.Request.Context(), settings, authSourceDefaults, omitted); err != nil {
+		var privacyErr *service.ClaudePrivacyError
+		if errors.As(err, &privacyErr) {
+			response.BadRequest(c, privacyErr.Code)
+			return
+		}
 		response.ErrorFrom(c, err)
 		return
 	}
@@ -2343,6 +2351,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		MaxClaudeCodeVersion:                                   updatedSettings.MaxClaudeCodeVersion,
 		AllowUngroupedKeyScheduling:                            updatedSettings.AllowUngroupedKeyScheduling,
 		BackendModeEnabled:                                     updatedSettings.BackendModeEnabled,
+		ClaudeCodeIdentityPrivacy:                              updatedSettings.ClaudeCodeIdentityPrivacy,
+		ClaudeCodeIdentityPrivacyReady:                         updatedSettings.ClaudeCodeIdentityPrivacyReady,
 		EnableFingerprintUnification:                           updatedSettings.EnableFingerprintUnification,
 		EnableMetadataPassthrough:                              updatedSettings.EnableMetadataPassthrough,
 		EnableCCHSigning:                                       updatedSettings.EnableCCHSigning,

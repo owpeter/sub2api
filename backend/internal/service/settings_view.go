@@ -236,6 +236,8 @@ type SystemSettings struct {
 	BackendModeEnabled bool
 
 	// Gateway forwarding behavior
+	ClaudeCodeIdentityPrivacy              *ClaudeCodeIdentityPrivacySettings
+	ClaudeCodeIdentityPrivacyReady         bool   // Read-only; never exposes the deployment key.
 	OpenAITTFTMode                         string // Responses first_token_ms 统计口径（默认 semantic）
 	EnableFingerprintUnification           bool   // 是否统一 OAuth 账号的指纹头（默认 true）
 	EnableMetadataPassthrough              bool   // 是否透传客户端原始 metadata（默认 false）

@@ -525,7 +525,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			}
 			until := time.Now().Add(time.Duration(cooldownMinutes) * time.Minute)
 			s.notifyAccountSchedulingBlocked(authAccount, until, "oauth_401")
-			if err := s.accountRepo.SetTempUnschedulable(ctx, authAccount.ID, until, msg); err != nil {
+			if err := s.accountRepo.SetTempUnschedulable(ctx, authAccount.ID, until, claudePrivacyLogText(ctx, msg)); err != nil {
 				slog.Warn("oauth_401_set_temp_unschedulable_failed", "account_id", authAccount.ID, "error", err)
 			}
 			shouldDisable = true
@@ -568,10 +568,10 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			account.ID,
 			account.Platform,
 			account.Type,
-			strings.TrimSpace(headers.Get("x-request-id")),
-			strings.TrimSpace(headers.Get("cf-ray")),
-			upstreamMsg,
-			truncateForLog(responseBody, 1024),
+			claudePrivacyLogText(ctx, strings.TrimSpace(headers.Get("x-request-id"))),
+			claudePrivacyLogText(ctx, strings.TrimSpace(headers.Get("cf-ray"))),
+			claudePrivacyLogText(ctx, upstreamMsg),
+			claudePrivacyLogText(ctx, truncateForLog(responseBody, 1024)),
 		)
 		shouldDisable = s.handle403(ctx, account, upstreamMsg, responseBody)
 	case 429:
@@ -971,6 +971,7 @@ func (s *RateLimitService) GeminiCooldown(ctx context.Context, account *Account)
 
 // handleAuthError 处理认证类错误(401/403)，停止账号调度
 func (s *RateLimitService) handleAuthError(ctx context.Context, account *Account, errorMsg string) {
+	errorMsg = claudePrivacyLogText(ctx, errorMsg)
 	s.notifyAccountSchedulingBlocked(account, time.Time{}, "auth_error")
 	if err := s.accountRepo.SetError(ctx, account.ID, errorMsg); err != nil {
 		slog.Warn("account_set_error_failed", "account_id", account.ID, "error", err)
@@ -1174,6 +1175,7 @@ func (s *RateLimitService) handleAntigravity403(ctx context.Context, account *Ac
 
 // handleCustomErrorCode 处理自定义错误码，停止账号调度
 func (s *RateLimitService) handleCustomErrorCode(ctx context.Context, account *Account, statusCode int, errorMsg string) {
+	errorMsg = claudePrivacyLogText(ctx, errorMsg)
 	msg := "Custom error code " + strconv.Itoa(statusCode) + ": " + errorMsg
 	s.notifyAccountSchedulingBlocked(account, time.Time{}, "custom_error_code")
 	if err := s.accountRepo.SetError(ctx, account.ID, msg); err != nil {
@@ -2793,7 +2795,7 @@ func (s *RateLimitService) triggerTempUnschedulable(ctx context.Context, account
 		StatusCode:      statusCode,
 		MatchedKeyword:  matchedKeyword,
 		RuleIndex:       ruleIndex,
-		ErrorMessage:    truncateTempUnschedMessage(responseBody, tempUnschedMessageMaxBytes),
+		ErrorMessage:    claudePrivacyLogText(ctx, truncateTempUnschedMessage(responseBody, tempUnschedMessageMaxBytes)),
 		Scope:           TempUnschedScopeAccount,
 	}
 	if modelScoped {

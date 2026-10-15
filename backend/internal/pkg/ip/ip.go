@@ -8,6 +8,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type clientIPSnapshot struct{ client, trusted string }
+
+// SnapshotClientIPs preserves ingress IP policy before gateway header redaction.
+// Only the resolved addresses are retained; no forwarding headers leave the gateway.
+func SnapshotClientIPs(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	if _, exists := c.Get("sub2api.client_ip_snapshot"); exists {
+		return
+	}
+	c.Set("sub2api.client_ip_snapshot", clientIPSnapshot{GetClientIP(c), GetTrustedClientIP(c)})
+}
+
 const forwardedIPSettingsKey = "sub2api.forwarded_ip_settings"
 
 type forwardedIPSettings struct {
@@ -57,6 +71,9 @@ func requestUsesLegacyForwardedIPTrust(c *gin.Context) bool {
 func GetClientIP(c *gin.Context) string {
 	if c == nil {
 		return ""
+	}
+	if value, ok := c.Get("sub2api.client_ip_snapshot"); ok {
+		return value.(clientIPSnapshot).client
 	}
 	if !requestUsesLegacyForwardedIPTrust(c) {
 		return GetTrustedClientIP(c)
@@ -153,6 +170,9 @@ func resolveLegacyForwardedHeaderIP(c *gin.Context) (string, string) {
 func GetTrustedClientIP(c *gin.Context) string {
 	if c == nil {
 		return ""
+	}
+	if value, ok := c.Get("sub2api.client_ip_snapshot"); ok {
+		return value.(clientIPSnapshot).trusted
 	}
 	return normalizeIP(c.ClientIP())
 }

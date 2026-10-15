@@ -49,6 +49,13 @@ func SetClaudeCodeClientContext(c *gin.Context, body []byte, parsedReq *service.
 		return
 	}
 	ua := c.GetHeader("User-Agent")
+	if _, prepared := service.ClaudePrivacyRoutingKey(c.Request.Context()); prepared {
+		// Prepare already validated the client protocol before anonymization.
+		ctx := service.SetClaudeCodeClient(c.Request.Context(), true)
+		ctx = service.SetClaudeCodeVersion(ctx, claudeCodeValidator.ExtractVersion(ua))
+		c.Request = c.Request.WithContext(ctx)
+		return
+	}
 	// Fast path：非 Claude CLI UA 直接判定 false，避免热路径二次 JSON 反序列化。
 	if !claudeCodeValidator.ValidateUserAgent(ua) {
 		ctx := service.SetClaudeCodeClient(c.Request.Context(), false)

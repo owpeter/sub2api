@@ -1284,6 +1284,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 			entry.ClientIP = &clientIP
 		}
 
+		sanitizeClaudePrivacyOps(c, entry)
 		enqueueOpsErrorLog(ops, entry)
 	}
 }
@@ -1400,6 +1401,7 @@ func logOpsRecoveredUpstream(c *gin.Context, ops *service.OpsService, finalStatu
 		entry.ClientIP = &clientIP
 	}
 	applyOpsLatencyFieldsFromContext(c, entry)
+	sanitizeClaudePrivacyOps(c, entry)
 	enqueueOpsErrorLog(ops, entry)
 }
 
@@ -1589,6 +1591,7 @@ func logOpsStreamErrorValue(c *gin.Context, ops *service.OpsService, wireStatus 
 		entry.ClientIP = &clientIP
 	}
 
+	sanitizeClaudePrivacyOps(c, entry)
 	enqueueOpsErrorLog(ops, entry)
 }
 
